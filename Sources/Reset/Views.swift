@@ -921,12 +921,16 @@ private struct SettingsWindowConfigurator: NSViewRepresentable {
     }
 }
 
+enum ScrollEdgeEffectStyleCompat {
+    case soft
+}
+
 private extension View {
     func glassEffect<S: Shape>(_ material: Material = .regular, in shape: S) -> some View {
         self.background(material, in: shape)
     }
 
-    func scrollEdgeEffectStyle(_ style: Any, for edge: Edge) -> some View {
+    func scrollEdgeEffectStyle(_ style: ScrollEdgeEffectStyleCompat, for edge: Edge) -> some View {
         self
     }
 

@@ -10,7 +10,7 @@
       <pubDate>Sat, 18 Jul 2026 03:38:13 +0000</pubDate>
       <sparkle:version>270718</sparkle:version>
       <sparkle:shortVersionString>270718</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <description><![CDATA[<h2>Reset! 270718</h2>]]></description>
       <enclosure
         url="https://github.com/meteor-ioi/Reset-macOS/releases/download/v270718/Reset-270718.zip"

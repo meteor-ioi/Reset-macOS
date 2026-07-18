@@ -2,12 +2,12 @@ name: Reset!
 options:
   bundleIdPrefix: com.reset
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
