@@ -831,7 +831,6 @@ struct SettingsView: View {
                             .fixedSize()
                     }
                 }
-                .sharedBackgroundVisibility(.hidden)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -921,3 +920,22 @@ private struct SettingsWindowConfigurator: NSViewRepresentable {
         )
     }
 }
+
+private extension View {
+    func glassEffect<S: Shape>(_ material: Material = .regular, in shape: S) -> some View {
+        self.background(material, in: shape)
+    }
+
+    func scrollEdgeEffectStyle(_ style: Any, for edge: Edge) -> some View {
+        self
+    }
+
+    func safeAreaBar<Content: View>(
+        edge: VerticalEdge,
+        spacing: CGFloat? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        self.safeAreaInset(edge: edge, spacing: spacing, content: content)
+    }
+}
+
