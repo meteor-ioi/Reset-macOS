@@ -11,15 +11,21 @@ struct AntigravityQuotaClient {
 
     func fetch() async throws -> ProviderUsage {
         var lastError: Error?
+        var mergedGroups: [QuotaGroup] = []
+        var totalCredits: Double?
+
         do {
-            for connection in try discoverConnections() {
+            let connections = try discoverConnections()
+            for connection in connections {
                 do {
                     let summary = try await request(
                         connection: connection,
                         path: "exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
                         body: Data(#"{"forceRefresh":true}"#.utf8)
                     )
-                    var usage = try Self.parseQuotaSummary(summary)
+                    let usage = try Self.parseQuotaSummary(summary)
+                    mergedGroups.append(contentsOf: usage.groups)
+
                     if let status = try? await request(
                         connection: connection,
                         path: "exa.language_server_pb.LanguageServerService/GetUserStatus",
@@ -32,10 +38,10 @@ struct AntigravityQuotaClient {
                             ],
                         ])
                     ) {
-                        usage.aiCredits = Self.parseCredits(status)
+                        if let credits = Self.parseCredits(status) {
+                            totalCredits = (totalCredits ?? 0) + credits
+                        }
                     }
-                    try? cache(usage)
-                    return usage
                 } catch {
                     lastError = error
                 }
@@ -43,6 +49,30 @@ struct AntigravityQuotaClient {
         } catch {
             lastError = error
         }
+
+        if !mergedGroups.isEmpty {
+            var uniqueGroups: [QuotaGroup] = []
+            var seenIds = Set<String>()
+            for group in mergedGroups {
+                if !seenIds.contains(group.id) {
+                    seenIds.insert(group.id)
+                    uniqueGroups.append(group)
+                }
+            }
+
+            let finalUsage = ProviderUsage(
+                provider: .googleAntigravity,
+                fiveHour: nil,
+                sevenDay: nil,
+                monthly: nil,
+                capturedAt: Date(),
+                groups: uniqueGroups,
+                aiCredits: totalCredits
+            )
+            try? cache(finalUsage)
+            return finalUsage
+        }
+
         // Antigravity's localhost service exists only while the app is running.
         // Keep the last verified snapshot visible indefinitely while it is closed;
         // the next successful read replaces it immediately.
