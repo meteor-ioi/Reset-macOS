@@ -22,7 +22,7 @@ fi
 
 TAG="v${VERSION#v}"
 VERSION="${TAG#v}"
-REPO="EEliberto/Reset-macOS"
+REPO="meteor-ioi/Reset-macOS"
 DERIVED="/tmp/Reset-Release-${VERSION}"
 STAGE="$(mktemp -d /tmp/reset-dmg.XXXXXX)"
 UPDATES="$ROOT/updates"
