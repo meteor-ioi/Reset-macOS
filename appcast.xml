@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>Reset!</title>
-    <link>https://github.com/EEliberto/Reset-macOS</link>
+    <link>https://github.com/meteor-ioi/Reset-macOS</link>
     <description>Reset! Sparkle appcast</description>
     <language>zh-Hans</language>
     <item>
@@ -10,10 +10,10 @@
       <pubDate>Sat, 18 Jul 2026 03:38:13 +0000</pubDate>
       <sparkle:version>270718</sparkle:version>
       <sparkle:shortVersionString>270718</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <description><![CDATA[<h2>Reset! 270718</h2>]]></description>
       <enclosure
-        url="https://github.com/EEliberto/Reset-macOS/releases/download/v270718/Reset-270718.zip"
+        url="https://github.com/meteor-ioi/Reset-macOS/releases/download/v270718/Reset-270718.zip"
         length="4214549"
         type="application/octet-stream"
         sparkle:edSignature="rVajprr2RB8JR+h4zPaAxKtkL3mO+b0XUt+bRCsP6EKNRoxGZb7QuS+U85jDQrUvNGDP1sYFtjK5407MzCZbAQ==" />

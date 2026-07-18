@@ -2,12 +2,12 @@ name: Reset!
 options:
   bundleIdPrefix: com.reset
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
@@ -34,7 +34,7 @@ targets:
       path: Resources/Info.plist
       properties:
         LSUIElement: true
-        SUFeedURL: https://raw.githubusercontent.com/EEliberto/Reset-macOS/main/appcast.xml
+        SUFeedURL: https://raw.githubusercontent.com/meteor-ioi/Reset-macOS/main/appcast.xml
         SUPublicEDKey: xPoz7tmmV7zrgnVeZL5zD7JvuEhvJUA+ofjsbupnguk=
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 43200
