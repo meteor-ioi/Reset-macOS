@@ -20,8 +20,7 @@ targets:
       - path: Sources/Reset
       - path: Resources/AgentIcons
         buildPhase: resources
-      - path: Reset!.icon
-        buildPhase: resources
+      - path: Resources/Assets.xcassets
     resources:
       - path: Resources/AgentIcons/antigravity.png
       - path: Resources/AgentIcons/chatgpt.png
