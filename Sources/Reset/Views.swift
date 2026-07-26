@@ -6,18 +6,32 @@ struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var isRefreshHovered = false
     @State private var isSettingsHovered = false
+    @State private var measuredCardsHeight: CGFloat = 0
+    @State private var measuredHeaderHeight: CGFloat = 0
 
     var body: some View {
         dashboard
             .frame(width: 330, alignment: .topLeading)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(height: dashboardHeight, alignment: .top)
+    }
+
+    private var dashboardHeight: CGFloat {
+        let activeScreen = NSScreen.screens.first {
+            $0.frame.contains(NSEvent.mouseLocation)
+        } ?? NSScreen.main
+        let available = activeScreen?.visibleFrame.height ?? 800
+        let maximum = max(360, available - 96)
+        guard measuredHeaderHeight > 0, measuredCardsHeight > 0 else {
+            return min(520, maximum)
+        }
+        return min(maximum, ceil(measuredHeaderHeight + measuredCardsHeight + 16))
     }
 
     @ViewBuilder
     private var dashboard: some View {
         ScrollView(.vertical) {
             Group {
-                if model.statuses.isEmpty {
+                if model.statuses.isEmpty && model.visibleBuildIntegrations.isEmpty {
                     VStack(spacing: 10) {
                         ProgressView()
                         Text(model.isRefreshing ? "正在读取 Agent 与额度…" : "正在准备 Agent 状态…")
@@ -26,12 +40,23 @@ struct MenuBarView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 54)
                 } else {
-                    LazyVStack(spacing: 10) {
+                    VStack(spacing: 10) {
                         ForEach(model.visibleStatuses) { status in
                             QuotaCard(status: status) { model.openAgent(status.provider) }
                         }
+                        ForEach(model.visibleBuildIntegrations) { status in
+                            BuildIntegrationCard(status: status)
+                        }
                     }
                     .padding(.vertical, 4)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: DashboardCardsHeightKey.self,
+                                value: proxy.size.height
+                            )
+                        }
+                    }
                 }
             }
             .background(ScrollElasticityConfigurator())
@@ -45,8 +70,18 @@ struct MenuBarView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: DashboardHeaderHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                }
         }
         .frame(width: 330, alignment: .topLeading)
+        .onPreferenceChange(DashboardCardsHeightKey.self) { measuredCardsHeight = $0 }
+        .onPreferenceChange(DashboardHeaderHeightKey.self) { measuredHeaderHeight = $0 }
     }
 
     private var dashboardHeader: some View {
@@ -155,7 +190,6 @@ struct QuotaCard: View {
 
     private var tint: Color { status.provider.accent }
     private var tintGradient: [Color] { status.provider.accentGradient }
-    private var isConnected: Bool { status.state == .connected }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -216,6 +250,11 @@ struct QuotaCard: View {
                     if let api = usage.displayableAPIWindow {
                         QuotaMetric(title: "API 额度", window: api, tint: tint, gradient: tintGradient)
                     }
+                    if status.provider == .kimiCode,
+                       let balance = usage.extraUsageBalance,
+                       let currency = usage.extraUsageCurrency {
+                        KimiExtraUsageRow(balance: balance, currency: currency)
+                    }
                 } else {
                     let summary = usage.groups.compactSummary
                     QuotaMetric(title: "模型额度（\(usage.groups.count) 个模型）", window: summary.window, tint: tint, gradient: tintGradient)
@@ -259,7 +298,29 @@ struct QuotaCard: View {
         }
         .padding(14)
         .quotaGlass(cornerRadius: 12)
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(tint.opacity(isConnected ? 0.18 : 0.08), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(tint.opacity(0.18), lineWidth: 1))
+    }
+}
+
+private struct KimiExtraUsageRow: View {
+    let balance: Double
+    let currency: String
+
+    private var formattedBalance: String {
+        let code = currency.uppercased()
+        let symbol = code == "CNY" ? "¥" : (code == "USD" ? "$" : "\(code) ")
+        return "\(symbol)\(balance.formatted(.number.precision(.fractionLength(2))))"
+    }
+
+    var body: some View {
+        HStack {
+            Text("额外用量余额")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(formattedBalance)
+                .font(.caption.monospacedDigit().weight(.semibold))
+        }
     }
 }
 
@@ -659,13 +720,12 @@ struct SettingsView: View {
     @State private var isHistoryNavigation = false
 
     private enum SettingsPane: String, CaseIterable, Identifiable {
-        case general, telegram, history, about
+        case general, telegram, about
         var id: Self { self }
         var title: String {
             switch self {
             case .general: "通用"
             case .telegram: "Telegram"
-            case .history: "历史与成本"
             case .about: "关于"
             }
         }
@@ -673,7 +733,6 @@ struct SettingsView: View {
             switch self {
             case .general: "gearshape"
             case .telegram: "paperplane"
-            case .history: "chart.line.uptrend.xyaxis"
             case .about: "info.circle"
             }
         }
@@ -703,19 +762,28 @@ struct SettingsView: View {
                         }
                     }
                     Section("通知") {
-                        Toggle("额度重置后发送设备通知", isOn: Binding(
+                        Toggle("允许 Reset! 发送设备通知", isOn: Binding(
                             get: { model.deviceNotificationsEnabled },
                             set: { enabled in Task { await model.setDeviceNotificationsEnabled(enabled) } }
                         ))
                     }
-                    Section("用量历史与成本") {
-                        LabeledContent("多设备历史", value: model.usageHistorySummary())
-                        if let period = model.usageHistoryPeriod() {
-                            LabeledContent("记录时段", value: period)
+                    Section {
+                        ForEach(ProviderKind.allCases) { provider in
+                            Toggle(isOn: Binding(
+                                get: { model.providerEnabled(provider) },
+                                set: { model.setProvider(provider, enabled: $0) }
+                            )) {
+                                ProviderIntegrationLabel(provider: provider)
+                            }
                         }
-                        Text("历史样本会通过 iCloud 在你的 Reset! 设备间合并；额度状态仍只读取本机。订阅接口通常不返回可核验的 Token 单价，因此不会用额度百分比伪装成本。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Toggle(isOn: Binding(
+                            get: { model.grokBuildIntegrationEnabled },
+                            set: { model.setBuildIntegration(.grokBuild, enabled: $0) }
+                        )) {
+                            BuildIntegrationLabel(integration: .grokBuild)
+                        }
+                    } header: {
+                        Text("Agent 接入")
                     }
                 case .telegram:
                     Section {
@@ -770,47 +838,69 @@ struct SettingsView: View {
                     } footer: {
                         Text("额度仅在本机读取。iCloud 只用于在多台 Mac 间选出一台负责 Telegram 推送，避免重复发送。")
                     }
-                case .history:
-                    Section("过去 24 小时") {
-                        let summaries = model.usageHistorySummaries()
-                        if summaries.isEmpty {
-                            Text("正在积累数据；约 5 分钟后可开始生成消耗速度预测。")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(summaries) { summary in
-                                HStack {
-                                    AgentIcon(provider: summary.provider, size: 22)
-                                    Text(summary.provider.title)
-                                    Spacer()
-                                    Text("已消耗 \(summary.utilizationChange24h, specifier: "%.1f")%")
-                                        .monospacedDigit()
-                                }
-                                LabeledContent("样本", value: "\(summary.samples)")
+                case .about:
+                    Section {
+                        VStack(spacing: 10) {
+                            Image(nsImage: NSApplication.shared.applicationIconImage)
+                                .resizable()
+                                .interpolation(.high)
+                                .antialiased(true)
+                                .scaledToFit()
+                                .frame(width: 76, height: 76)
+
+                            VStack(spacing: 3) {
+                                Text("Reset!")
+                                    .font(.title2.weight(.semibold))
+                                Text("版本 \(model.appVersion)")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
                             }
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
                     }
-                    Section("成本") {
-                        Text("当前订阅额度接口不会提供可核验的 Token 单价或账单金额。Reset! 不会把额度百分比伪装为费用；当 Provider 返回实际 API/账单金额时，这里会显示按 Provider 汇总的真实成本。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                case .about:
-                    Section("Reset!") {
-                        LabeledContent("版本", value: model.appVersion)
+
+                    Section("更新") {
                         LabeledContent("更新状态", value: sparkle.statusMessage)
                         if let version = sparkle.latestVersion {
                             Text("最新版本 \(version) 已发布。Sparkle 会引导你安装更新。")
                                 .foregroundStyle(.secondary)
                         }
-                        HStack {
-                            Button(sparkle.isChecking ? "检查中…" : "检查更新") {
-                                model.checkForUpdates(force: true)
-                            }
-                            .disabled(sparkle.isChecking)
-                            Button("打开 GitHub") {
-                                model.openRepository()
-                            }
+                        Button(sparkle.isChecking ? "检查中…" : "检查更新", systemImage: "arrow.clockwise") {
+                            model.checkForUpdates(force: true)
                         }
+                        .disabled(sparkle.isChecking)
+                    }
+
+                    Section("项目") {
+                        Button {
+                            model.openRepository()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(nsImage: NSApplication.shared.applicationIconImage)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .antialiased(true)
+                                    .scaledToFit()
+                                    .frame(width: 38, height: 38)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Reset!")
+                                        .font(.body.weight(.medium))
+                                        .foregroundStyle(.primary)
+                                    Text("EEliberto/Reset-macOS")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -862,6 +952,129 @@ struct SettingsView: View {
         backStack.append(selectedPane)
         isHistoryNavigation = true
         selectedPane = destination
+    }
+}
+
+private struct BuildIntegrationCard: View {
+    let status: BuildIntegrationStatus
+
+    private var stateTitle: String {
+        switch status.state {
+        case .running: "正在执行"
+        case .completed: "刚刚完成"
+        case .failed: "任务失败"
+        case nil: "等待活动"
+        }
+    }
+
+    private var stateSymbol: String {
+        switch status.state {
+        case .running: "bolt.circle.fill"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "exclamationmark.circle.fill"
+        case nil: "clock"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                BuildIntegrationIcon(integration: status.integration, size: 38)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(status.integration.title).font(.headline.weight(.semibold))
+                    Text(status.integration.company).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Label(stateTitle, systemImage: stateSymbol)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(status.state == .failed ? .red : .secondary)
+            }
+            if let summary = status.summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else {
+                Text(status.observedAt.map { "最近活动：\(chineseDateTime($0))" } ?? "等待本地 Agent 活动")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .quotaGlass(cornerRadius: 12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.gray.opacity(0.18), lineWidth: 1)
+        )
+    }
+}
+
+private struct DashboardCardsHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct DashboardHeaderHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct BuildIntegrationLabel: View {
+    let integration: BuildIntegrationKind
+
+    var body: some View {
+        HStack(spacing: 10) {
+            BuildIntegrationIcon(integration: integration, size: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(integration.title)
+                Text(integration.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct ProviderIntegrationLabel: View {
+    let provider: ProviderKind
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentIcon(provider: provider, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.title)
+                Text("启用额度查询、主页显示与提醒")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct BuildIntegrationIcon: View {
+    let integration: BuildIntegrationKind
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let url = Bundle.main.url(
+                forResource: integration.iconResource,
+                withExtension: "png",
+                subdirectory: "AgentIcons"
+            ) ?? Bundle.main.url(forResource: integration.iconResource, withExtension: "png"),
+               let image = NSImage(contentsOf: url) {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: "terminal").resizable().scaledToFit().padding(5)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.23, style: .continuous))
     }
 }
 

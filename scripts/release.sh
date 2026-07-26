@@ -28,8 +28,11 @@ STAGE="$(mktemp -d /tmp/reset-dmg.XXXXXX)"
 UPDATES="$ROOT/updates"
 DMG_NAME="Reset-${VERSION}.dmg"
 DMG="$UPDATES/$DMG_NAME"
+ZIP_NAME="Reset-${VERSION}.zip"
+ZIP="$UPDATES/$ZIP_NAME"
 KEY_FILE="$ROOT/Secrets/sparkle_ed25519"
 SPARKLE_TOOLS="$ROOT/tools/sparkle/bin"
+RELEASE_NOTES="$ROOT/RELEASE_NOTES_${VERSION}.md"
 
 echo "==> Version ${VERSION}  Tag ${TAG}"
 
@@ -53,76 +56,116 @@ fi
 command -v xcodegen >/dev/null && xcodegen generate
 
 echo "==> Building Release"
-xcodebuild \
-  -scheme Reset \
-  -configuration Release \
-  -destination 'platform=macOS' \
-  -derivedDataPath "$DERIVED" \
-  clean build | rg 'error:|warning:|BUILD SUCCEEDED|BUILD FAILED' || true
+mkdir -p "$DERIVED"
+BUILD_LOG="$DERIVED/build.log"
+if ! xcodebuild \
+    -scheme Reset \
+    -configuration Release \
+    -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED" \
+    clean build > "$BUILD_LOG" 2>&1; then
+  rg 'error:|warning:|BUILD SUCCEEDED|BUILD FAILED' "$BUILD_LOG" || true
+  exit 1
+fi
+rg 'error:|warning:|BUILD SUCCEEDED|BUILD FAILED' "$BUILD_LOG" || true
 
 APP="$DERIVED/Build/Products/Release/Reset!.app"
 if [[ ! -d "$APP" ]]; then
   echo "Build failed: missing $APP" >&2
   exit 1
 fi
+codesign --verify --deep --strict --verbose=2 "$APP"
 
-echo "==> Packaging DMG"
+echo "==> Packaging DMG and Sparkle ZIP"
 mkdir -p "$UPDATES"
-rm -f "$DMG"
 ditto "$APP" "$STAGE/Reset!.app"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -ov -volname "Reset!" -srcfolder "$STAGE" -format UDZO "$DMG"
-rm -rf "$STAGE"
 hdiutil verify "$DMG"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
 NOTES_HTML="$UPDATES/Reset-${VERSION}.html"
-cat > "$NOTES_HTML" <<EOF
+cat > "$NOTES_HTML" <<'EOF'
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<body>
+  <h2>感谢你使用 Reset!</h2>
+  <p>本次 270726 带来了如下更新：</p>
+  <ol>
+    <li>新增对 Grok CLI、Kimi、Antigravity IDE 的支持，在设置中打开对应 Agent 开关按钮即可，同时支持关闭不需要的 Agent。</li>
+    <li>修复了一些已知问题。</li>
+  </ol>
+  <p>如果你在使用 Reset! 时遇到了任何问题，欢迎在 <a href="https://github.com/EEliberto/Reset-macOS/issues">GitHub</a> 提交你的 Issue。</p>
+</body>
+</html>
+EOF
+
+if [[ "$VERSION" != "270726" ]]; then
+  cat > "$NOTES_HTML" <<EOF
 <!DOCTYPE html>
 <html lang="zh-Hans">
 <body>
   <h2>Reset! ${VERSION}</h2>
   <ul>
-    <li>菜单栏额度监控（Codex / Claude Code / Cursor / Antigravity）</li>
-    <li>Telegram 推送与多设备协调</li>
-    <li>Sparkle 自动更新</li>
+    <li>功能改进与问题修复。</li>
   </ul>
 </body>
 </html>
 EOF
-
-echo "==> Generating Sparkle appcast"
-DOWNLOAD_PREFIX="https://github.com/${REPO}/releases/download/${TAG}/"
-"$SPARKLE_TOOLS/generate_appcast" \
-  --ed-key-file "$KEY_FILE" \
-  --download-url-prefix "$DOWNLOAD_PREFIX" \
-  -o appcast.xml \
-  "$UPDATES"
-cp -f "$UPDATES/appcast.xml" "$ROOT/appcast.xml" 2>/dev/null || true
-# generate_appcast writes into archives dir using -o name
-if [[ -f "$UPDATES/appcast.xml" ]]; then
-  cp -f "$UPDATES/appcast.xml" "$ROOT/appcast.xml"
 fi
 
-NOTES="$(cat <<EOF
-## Reset! ${VERSION}
+echo "==> Signing Sparkle update"
+SIGNATURE_OUTPUT="$("$SPARKLE_TOOLS/sign_update" --ed-key-file "$KEY_FILE" "$ZIP")"
+ED_SIGNATURE="$(printf '%s\n' "$SIGNATURE_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
+ARCHIVE_LENGTH="$(printf '%s\n' "$SIGNATURE_OUTPUT" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
+if [[ -z "$ED_SIGNATURE" || -z "$ARCHIVE_LENGTH" ]]; then
+  echo "Unable to parse Sparkle signature output" >&2
+  exit 1
+fi
 
-- Sparkle 自动更新（appcast）
-- Telegram「确认并测试推送」
-- 本机额度监控 + iCloud 推送协调
-
-安装：打开 DMG，将 Reset! 拖到 Applications。
+PUB_DATE="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+cat > "$ROOT/appcast.xml" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Reset!</title>
+    <link>https://github.com/${REPO}</link>
+    <description>Reset! Sparkle appcast</description>
+    <language>zh-Hans</language>
+    <item>
+      <title>Version ${VERSION}</title>
+      <pubDate>${PUB_DATE}</pubDate>
+      <sparkle:version>${VERSION}</sparkle:version>
+      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[$(sed -n '/<body>/,/<\/body>/p' "$NOTES_HTML")]]></description>
+      <enclosure
+        url="https://github.com/${REPO}/releases/download/${TAG}/${ZIP_NAME}"
+        length="${ARCHIVE_LENGTH}"
+        type="application/octet-stream"
+        sparkle:edSignature="${ED_SIGNATURE}" />
+    </item>
+  </channel>
+</rss>
 EOF
-)"
+
+if [[ -f "$RELEASE_NOTES" ]]; then
+  NOTES_FILE="$RELEASE_NOTES"
+else
+  NOTES_FILE="$UPDATES/Reset-${VERSION}.md"
+  printf '# Reset! %s\n\n功能改进与问题修复。\n' "$VERSION" > "$NOTES_FILE"
+fi
 
 echo "==> Publishing GitHub Release ${TAG}"
 cp -f "$DMG" "$ROOT/Reset!.dmg"
 if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-  gh release upload "$TAG" "$DMG" "$ROOT/appcast.xml" -R "$REPO" --clobber
+  gh release upload "$TAG" "$DMG" "$ZIP" "$ROOT/appcast.xml" -R "$REPO" --clobber
+  gh release edit "$TAG" -R "$REPO" --title "Reset! ${VERSION}" --notes-file "$NOTES_FILE"
 else
-  gh release create "$TAG" "$DMG" "$ROOT/appcast.xml" \
+  gh release create "$TAG" "$DMG" "$ZIP" "$ROOT/appcast.xml" \
     -R "$REPO" \
     --title "Reset! ${VERSION}" \
-    --notes "$NOTES"
+    --notes-file "$NOTES_FILE"
 fi
 
 echo "==> Done"

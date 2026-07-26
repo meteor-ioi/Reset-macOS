@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>你的 AI Agent 额度一览</strong><br />
-  一眼看清 Codex · Claude Code · Antigravity · Cursor 还剩多少额度
+  一眼看清 Codex · Claude Code · Cursor · Antigravity · Kimi 还剩多少额度
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 
 ---
 
-SwiftUI 原生菜单栏工具，监控 **Codex（ChatGPT）**、**Claude Code**、**Google Antigravity**、**Cursor** 的 5 小时 / 周限额，并支持 **Telegram 推送** 与 **iCloud 多设备协调**。
+SwiftUI 原生菜单栏工具，监控 **Codex（ChatGPT）**、**Claude Code**、**Cursor**、**Google Antigravity / Antigravity IDE** 与 **Kimi** 的额度，并支持 **Grok CLI 本地状态接入**、**Telegram 推送**和 **iCloud 多设备协调**。每个 Agent 都可在设置中单独显示或隐藏。
 
 ## 功能
 
@@ -59,7 +59,7 @@ SwiftUI 原生菜单栏工具，监控 **Codex（ChatGPT）**、**Claude Code**�
 ## 安装
 
 1. 打开 [Releases](https://github.com/EEliberto/Reset-macOS/releases/latest)
-2. 下载 **`Reset-270718.dmg`**
+2. 下载 **`Reset-270726.dmg`**
 3. 将 **Reset!** 拖入 Applications
 
 首次打开若提示未验证开发者：系统设置 → 隐私与安全性 → 仍要打开。

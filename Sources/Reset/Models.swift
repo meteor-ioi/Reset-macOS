@@ -6,6 +6,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
     case chatGPT = "chatgpt"
     case cursor
     case googleAntigravity = "antigravity"
+    case kimiCode = "kimi-code"
 
     var id: String { rawValue }
     var title: String {
@@ -14,6 +15,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: "ChatGPT"
         case .cursor: "Cursor"
         case .googleAntigravity: "Antigravity"
+        case .kimiCode: "Kimi"
         }
     }
 
@@ -23,6 +25,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: "OpenAI"
         case .cursor: "Anysphere"
         case .googleAntigravity: "Google"
+        case .kimiCode: "月之暗面"
         }
     }
 
@@ -32,6 +35,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: "chatgpt"
         case .cursor: "cursor"
         case .googleAntigravity: "antigravity"
+        case .kimiCode: "kimi"
         }
     }
 
@@ -41,6 +45,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: .mint
         case .cursor: .indigo
         case .googleAntigravity: .blue
+        case .kimiCode: .gray
         }
     }
 
@@ -55,6 +60,8 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
             [Color(red: 0.30, green: 0.25, blue: 0.85), Color(red: 0.52, green: 0.42, blue: 0.95)]
         case .googleAntigravity:
             [Color(red: 0.18, green: 0.48, blue: 0.98), Color(red: 0.34, green: 0.74, blue: 1.0)]
+        case .kimiCode:
+            [Color(red: 0.05, green: 0.05, blue: 0.06), Color(red: 0.30, green: 0.34, blue: 0.40)]
         }
     }
 
@@ -63,7 +70,8 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .claudeCode: ["claude"]
         case .chatGPT: ["codex"]
         case .cursor: ["cursor-agent", "cursor"]
-        case .googleAntigravity: ["agy", "antigravity", "antigravity-cli"]
+        case .googleAntigravity: ["agy", "agy-ide", "antigravity", "antigravity-cli"]
+        case .kimiCode: ["kimi"]
         }
     }
 
@@ -74,8 +82,11 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .cursor: ["/Applications/Cursor.app/Contents/MacOS/Cursor"]
         case .googleAntigravity: [
             "/Applications/Antigravity.app/Contents/MacOS/Antigravity",
-            "/Applications/Antigravity.app/Contents/MacOS/antigravity"
+            "/Applications/Antigravity.app/Contents/MacOS/antigravity",
+            "/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity IDE",
+            "/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity"
         ]
+        case .kimiCode: ["/Applications/Kimi.app/Contents/MacOS/Kimi"]
         }
     }
 
@@ -92,7 +103,20 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .cursor:
             ["cursor.app/contents/macos/cursor", "cursor-agent"]
         case .googleAntigravity:
-            ["antigravity.app/contents/macos/antigravity", "antigravity-cli", "/agentapi"]
+            [
+                "antigravity.app/contents/macos/antigravity",
+                "antigravity ide.app/contents/macos/antigravity",
+                "antigravity-cli",
+                "agy-ide",
+                "/agentapi"
+            ]
+        case .kimiCode:
+            [
+                "kimi.app/contents/macos/kimi",
+                "/.local/bin/kimi",
+                "/kimi-code",
+                "/kimi"
+            ]
         }
     }
 
@@ -101,10 +125,45 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: ["com.openai.codex"]
         case .claudeCode: ["com.anthropic.claudefordesktop"]
         case .cursor: ["com.todesktop.230313mzl4w4u92"]
-        case .googleAntigravity: ["com.google.antigravity"]
+        case .googleAntigravity: [
+            "com.google.antigravity",
+            "com.google.antigravity-ide",
+            "com.google.antigravity.ide"
+        ]
+        case .kimiCode: ["com.moonshot.kimichat"]
         }
     }
 
+}
+
+enum BuildIntegrationKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendable {
+    case grokBuild = "grok-build"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .grokBuild: "Grok CLI"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .grokBuild: "启用 Grok CLI 本地状态接入"
+        }
+    }
+
+    var company: String {
+        switch self {
+        case .grokBuild: "X"
+        }
+    }
+
+    var iconResource: String {
+        switch self {
+        case .grokBuild: "grok-build"
+        }
+    }
 }
 
 enum AgentState: String, Codable, Sendable {
@@ -178,29 +237,7 @@ struct ProviderDiagnostics: Codable, Equatable, Sendable {
     var consecutiveFailures: Int
     var message: String?
     var source: String
-}
-
-struct UsageForecast: Codable, Equatable, Sendable {
-    var percentPerHour: Double
-    var estimatedExhaustion: Date?
-    var isLikelyToExhaustBeforeReset: Bool
-}
-
-struct UsageHistoryPoint: Codable, Equatable, Sendable {
-    var date: Date
-    var provider: ProviderKind
-    var utilization: Double
-    var estimatedCostUSD: Double?
-    var originDeviceID: String? = nil
-}
-
-struct UsageHistorySummary: Identifiable, Equatable, Sendable {
-    var provider: ProviderKind
-    var samples: Int
-    var utilizationChange24h: Double
-    var estimatedCostUSD: Double?
-
-    var id: ProviderKind { provider }
+    var failureStartedAt: Date? = nil
 }
 
 struct QuotaWindow: Codable, Equatable, Sendable {
@@ -272,6 +309,8 @@ struct ProviderUsage: Codable, Equatable, Sendable {
     var apiActive: Bool? = nil
     var cursorAutoComposer: QuotaWindow? = nil
     var cursorAPI: QuotaWindow? = nil
+    var extraUsageBalance: Double? = nil
+    var extraUsageCurrency: String? = nil
 
     /// A zero balance represents unavailable credits, not a quota worth showing.
     var displayableAPIWindow: QuotaWindow? {
@@ -307,8 +346,25 @@ struct AgentStatus: Identifiable, Codable, Equatable, Sendable {
     var detail: String?
     var activity: AgentActivity? = nil
     var diagnostics: ProviderDiagnostics? = nil
-    var forecast: UsageForecast? = nil
 
     var id: String { provider.rawValue }
 
+}
+
+struct BuildIntegrationStatus: Identifiable, Equatable, Sendable {
+    var integration: BuildIntegrationKind
+    var state: BuildIntegrationEvent.State?
+    var observedAt: Date?
+    var summary: String?
+
+    var id: BuildIntegrationKind { integration }
+}
+
+enum LowQuotaNotificationLogic {
+    static func shouldNotify(previousRemaining: Double?, currentRemaining: Double?) -> Bool {
+        guard let currentRemaining,
+              currentRemaining <= QuotaWindow.criticalRemainingThreshold else { return false }
+        guard let previousRemaining else { return true }
+        return previousRemaining > QuotaWindow.criticalRemainingThreshold
+    }
 }

@@ -1,22 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Reset!</title>
     <link>https://github.com/EEliberto/Reset-macOS</link>
     <description>Reset! Sparkle appcast</description>
     <language>zh-Hans</language>
     <item>
-      <title>Version 270718</title>
-      <pubDate>Sat, 18 Jul 2026 03:38:13 +0000</pubDate>
-      <sparkle:version>270718</sparkle:version>
-      <sparkle:shortVersionString>270718</sparkle:shortVersionString>
+      <title>Version 270726</title>
+      <pubDate>Sun, 26 Jul 2026 05:07:29 +0000</pubDate>
+      <sparkle:version>270726</sparkle:version>
+      <sparkle:shortVersionString>270726</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<h2>Reset! 270718</h2>]]></description>
+      <description><![CDATA[<body>
+  <h2>感谢你使用 Reset!</h2>
+  <p>本次 270726 带来了如下更新：</p>
+  <ol>
+    <li>新增对 Grok CLI、Kimi、Antigravity IDE 的支持，在设置中打开对应 Agent 开关按钮即可，同时支持关闭不需要的 Agent。</li>
+    <li>修复了一些已知问题。</li>
+  </ol>
+  <p>如果你在使用 Reset! 时遇到了任何问题，欢迎在 <a href="https://github.com/EEliberto/Reset-macOS/issues">GitHub</a> 提交你的 Issue。</p>
+</body>]]></description>
       <enclosure
-        url="https://github.com/EEliberto/Reset-macOS/releases/download/v270718/Reset-270718.zip"
-        length="4214549"
+        url="https://github.com/EEliberto/Reset-macOS/releases/download/v270726/Reset-270726.zip"
+        length="6054659"
         type="application/octet-stream"
-        sparkle:edSignature="rVajprr2RB8JR+h4zPaAxKtkL3mO+b0XUt+bRCsP6EKNRoxGZb7QuS+U85jDQrUvNGDP1sYFtjK5407MzCZbAQ==" />
+        sparkle:edSignature="jOI2WkHHGhD7wlD5PQUKwpdjCo+eSO6w5won41+NapuECd37V+mkDq4YCZzg6BHpijqPzi5VnqH/Btv99HDzBQ==" />
     </item>
   </channel>
 </rss>

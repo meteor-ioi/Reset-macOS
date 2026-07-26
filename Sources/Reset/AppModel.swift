@@ -4,6 +4,20 @@ import AppKit
 import UserNotifications
 import ServiceManagement
 
+private final class AppModelObserverStore: @unchecked Sendable {
+    var appActivation: NSObjectProtocol?
+    var quitRequest: NSObjectProtocol?
+
+    deinit {
+        if let appActivation {
+            NSWorkspace.shared.notificationCenter.removeObserver(appActivation)
+        }
+        if let quitRequest {
+            NotificationCenter.default.removeObserver(quitRequest)
+        }
+    }
+}
+
 private struct DeviceNotificationClient: Sendable {
     func requestAuthorization() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
@@ -93,6 +107,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var isConfirmingTelegram = false
     @Published private(set) var telegramVerificationMessage = ""
     @Published var deviceNotificationsEnabled = false
+    @Published private(set) var enabledProviders: [ProviderKind: Bool]
+    @Published var grokBuildIntegrationEnabled = false
+    @Published private(set) var buildIntegrationStatuses: [BuildIntegrationStatus] = []
     @Published var launchAtLoginEnabled = false
     @Published private(set) var launchAtLoginRequiresApproval = false
     @Published var message = "准备就绪"
@@ -102,22 +119,25 @@ final class AppModel: ObservableObject {
     private let detector = AgentDetector()
     private let telegram = TelegramBotClient()
     private let deviceNotifications = DeviceNotificationClient()
+    private let buildIntegrationMonitor = BuildIntegrationMonitor()
     private let deviceSync = ICloudDeviceSync()
-    private let usageHistory = UsageHistoryStore()
     private let deviceID: String
     private let deviceName: String
     private var pollingTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
     private var deviceSyncTask: Task<Void, Never>?
     private var telegramConfigurationTask: Task<Void, Never>?
+    private var buildIntegrationTask: Task<Void, Never>?
+    private var grokEventOffset: UInt64 = 0
     private var refreshPending = false
-    private var publishedHistoryFingerprint = ""
     private var holdsTelegramLease = false
-    private var appActivationObserver: NSObjectProtocol?
-    private var quitRequestObserver: NSObjectProtocol?
+    private let observerStore = AppModelObserverStore()
     private var pendingResetEvents: [ResetEvent]
 
     private static let deviceNotificationsKey = "deviceNotificationsEnabled"
+    private static let providerEnabledKeyPrefix = "providerEnabled."
+    private static let lowQuotaStateKeyPrefix = "lowQuotaState."
+    private static let grokBuildIntegrationKey = "buildIntegration.grokBuild.enabled"
     private static let pendingResetEventsKey = "pendingResetEvents"
     private static let scheduledDeviceResetNotificationsKey = "scheduledDeviceResetNotifications"
     private static let deviceIDKey = "deviceID"
@@ -128,9 +148,6 @@ final class AppModel: ObservableObject {
     private static let antigravityCreditsActiveKey = "antigravityCreditsActive"
     private static let lastMaintenanceKey = "lastMaintenanceAt"
     private static let lastServerSeenKey = "lastServerSeenAt"
-    private static let lastServerOfflineNoticeKey = "lastServerOfflineNoticeAt"
-    private static let healthAlertKey = "lastProviderHealthAlert"
-    private static let quotaAlertKey = "lastQuotaAlert"
 
     init() {
         let defaults = UserDefaults.standard
@@ -144,9 +161,14 @@ final class AppModel: ObservableObject {
         deviceName = Host.current().localizedName ?? "Mac"
         providerOrder = Self.loadProviderOrder()
         pendingResetEvents = Self.loadPendingResetEvents()
+        enabledProviders = Dictionary(uniqueKeysWithValues: ProviderKind.allCases.map { provider in
+            let key = Self.providerEnabledKeyPrefix + provider.rawValue
+            return (provider, defaults.object(forKey: key) as? Bool ?? true)
+        })
         telegramToken = SecureTokenStore.loadTelegramToken() ?? ""
         telegramChatID = ""
         deviceNotificationsEnabled = UserDefaults.standard.bool(forKey: Self.deviceNotificationsKey)
+        grokBuildIntegrationEnabled = defaults.bool(forKey: Self.grokBuildIntegrationKey)
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         launchAtLoginRequiresApproval = SMAppService.mainApp.status == .requiresApproval
         telegramEnabled = false
@@ -159,7 +181,7 @@ final class AppModel: ObservableObject {
         } else {
             activeProvider = rememberedProvider
         }
-        appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        observerStore.appActivation = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
@@ -174,7 +196,7 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        quitRequestObserver = NotificationCenter.default.addObserver(
+        observerStore.quitRequest = NotificationCenter.default.addObserver(
             forName: .quitResetRequested,
             object: nil,
             queue: .main
@@ -193,19 +215,34 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(30))
             }
         }
+        if grokBuildIntegrationEnabled {
+            try? buildIntegrationMonitor.setGrokHookEnabled(true)
+        }
+        grokEventOffset = buildIntegrationMonitor.currentGrokEventOffset()
+        buildIntegrationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollBuildIntegrations()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: "usageHistory.v1")
+        Task { [deviceSync] in await deviceSync.purgeLegacyUsageHistory() }
         _ = SparkleUpdateController.shared
     }
 
     deinit {
+        pollingTask?.cancel()
         autoRefreshTask?.cancel()
         deviceSyncTask?.cancel()
         telegramConfigurationTask?.cancel()
+        buildIntegrationTask?.cancel()
     }
 
     func quitApplication() {
         pollingTask?.cancel()
         autoRefreshTask?.cancel()
         deviceSyncTask?.cancel()
+        buildIntegrationTask?.cancel()
         Task {
             await deviceSync.releaseTelegramLease(deviceID: deviceID)
             NSApplication.shared.terminate(nil)
@@ -243,6 +280,86 @@ final class AppModel: ObservableObject {
 
     func openLoginItemsSettings() {
         SMAppService.openSystemSettingsLoginItems()
+    }
+
+    func setBuildIntegration(_ integration: BuildIntegrationKind, enabled: Bool) {
+        Task {
+            do {
+                try buildIntegrationMonitor.setGrokHookEnabled(enabled)
+                grokBuildIntegrationEnabled = enabled
+                UserDefaults.standard.set(enabled, forKey: Self.grokBuildIntegrationKey)
+                grokEventOffset = buildIntegrationMonitor.currentGrokEventOffset()
+                updateBuildIntegrationStatus(integration, event: nil)
+            } catch {
+                grokBuildIntegrationEnabled = false
+                UserDefaults.standard.set(false, forKey: Self.grokBuildIntegrationKey)
+                message = "Grok CLI 接入失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func pollBuildIntegrations() async {
+        if grokBuildIntegrationEnabled {
+            let batch = buildIntegrationMonitor.grokEvents(fromOffset: grokEventOffset)
+            grokEventOffset = batch.nextOffset
+            if let event = batch.events.last {
+                updateBuildIntegrationStatus(.grokBuild, event: event)
+            }
+        } else {
+            grokEventOffset = buildIntegrationMonitor.currentGrokEventOffset()
+        }
+    }
+
+    private func updateBuildIntegrationStatus(_ integration: BuildIntegrationKind, event: BuildIntegrationEvent?) {
+        let status = BuildIntegrationStatus(
+            integration: integration,
+            state: event?.state,
+            observedAt: event?.observedAt,
+            summary: event?.summary
+        )
+        if let index = buildIntegrationStatuses.firstIndex(where: { $0.integration == integration }) {
+            if event != nil {
+                buildIntegrationStatuses[index] = status
+            } else {
+                buildIntegrationStatuses.remove(at: index)
+            }
+        } else if event != nil {
+            buildIntegrationStatuses.append(status)
+        }
+    }
+
+    var visibleBuildIntegrations: [BuildIntegrationStatus] {
+        BuildIntegrationKind.allCases.compactMap { integration in
+            guard grokBuildIntegrationEnabled else { return nil }
+            return buildIntegrationStatuses.first(where: { $0.integration == integration })
+                ?? BuildIntegrationStatus(integration: integration, state: nil, observedAt: nil, summary: nil)
+        }
+    }
+
+    func providerEnabled(_ provider: ProviderKind) -> Bool {
+        enabledProviders[provider] ?? true
+    }
+
+    func setProvider(_ provider: ProviderKind, enabled: Bool) {
+        enabledProviders[provider] = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.providerEnabledKeyPrefix + provider.rawValue)
+        if !enabled {
+            statuses.removeAll { $0.provider == provider }
+            if activeProvider == provider { activeProvider = visibleStatuses.first?.provider }
+            let removedEvents = pendingResetEvents.filter { $0.providerName == provider.title }
+            pendingResetEvents.removeAll { $0.providerName == provider.title }
+            savePendingResetEvents()
+            var scheduled = Self.loadScheduledDeviceResetNotifications()
+            scheduled = scheduled.filter { !$0.key.hasPrefix("\(provider.title)|") }
+            Self.saveScheduledDeviceResetNotifications(scheduled)
+            deviceNotifications.cancel(identifiers: removedEvents.map(\.id))
+            Task {
+                await deviceNotifications.cancelResetNotifications(
+                    identifierPrefixes: ["reset.\(provider.title)."]
+                )
+            }
+        }
+        Task { await refresh() }
     }
 
     private func synchronizeDevices() async {
@@ -295,21 +412,6 @@ final class AppModel: ObservableObject {
         )
         do {
             try await deviceSync.writePresence(presence)
-            let localHistory = usageHistory.localPoints(deviceID: deviceID)
-            let encodedHistory = try JSONEncoder().encode(localHistory)
-            let historyFingerprint = "\(encodedHistory.count)|\(encodedHistory.hashValue)"
-            if historyFingerprint != publishedHistoryFingerprint {
-                try await deviceSync.writeUsageHistory(
-                    deviceID: deviceID,
-                    deviceName: deviceName,
-                    points: localHistory
-                )
-                publishedHistoryFingerprint = historyFingerprint
-            }
-            usageHistory.mergeShared(
-                await deviceSync.allUsageHistory(),
-                localDeviceID: deviceID
-            )
             knownDevices = await deviceSync.allDevices()
             var sharedPreferred = await deviceSync.preferredServerID()
             if sharedPreferred == nil {
@@ -325,8 +427,6 @@ final class AppModel: ObservableObject {
             currentServerName = elected.map { $0.deviceID == sharedPreferred ? $0.deviceName : "\($0.deviceName)（接管）" } ?? "未发现推送设备"
             if elected?.deviceID == sharedPreferred {
                 UserDefaults.standard.set(now, forKey: Self.lastServerSeenKey)
-            } else {
-                await notifyServerOfflineIfNeeded(now: now)
             }
             // Quotas stay local. iCloud only elects which Mac owns Telegram push.
             let wantsTelegram = !telegramToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -357,21 +457,6 @@ final class AppModel: ObservableObject {
         } catch {
             iCloudSyncStatus = "协调失败：\(error.localizedDescription)"
         }
-    }
-
-    private func notifyServerOfflineIfNeeded(now: Date) async {
-        guard deviceNotificationsEnabled,
-              let lastSeen = UserDefaults.standard.object(forKey: Self.lastServerSeenKey) as? Date,
-              now.timeIntervalSince(lastSeen) > 180 else { return }
-        let lastNotice = UserDefaults.standard.object(forKey: Self.lastServerOfflineNoticeKey) as? Date ?? .distantPast
-        guard now.timeIntervalSince(lastNotice) > 86_400 else { return }
-        UserDefaults.standard.set(now, forKey: Self.lastServerOfflineNoticeKey)
-        await deviceNotifications.notifyNow(
-            identifier: "reset.server-offline.\(Int(now.timeIntervalSince1970 / 86_400))",
-            title: "Reset! 推送设备离线",
-            body: "超过 3 分钟未收到首选推送设备心跳，Telegram 推送可能暂停。",
-            silent: false
-        )
     }
 
     @discardableResult
@@ -504,11 +589,11 @@ final class AppModel: ObservableObject {
 
     var visibleStatuses: [AgentStatus] {
         providerOrder
+            .filter { providerEnabled($0) }
             .compactMap { provider in statuses.first(where: { $0.provider == provider }) }
-            .filter { $0.state != .notInstalled }
     }
 
-    private static let defaultProviderOrder: [ProviderKind] = [.chatGPT, .googleAntigravity, .claudeCode, .cursor]
+    private static let defaultProviderOrder: [ProviderKind] = [.chatGPT, .googleAntigravity, .kimiCode, .claudeCode, .cursor]
     private static let orderKey = "providerOrder"
     private static let activityScoresKey = "providerActivityScores"
 
@@ -531,19 +616,15 @@ final class AppModel: ObservableObject {
         message = "正在更新额度…"
         let dueEvents = pendingResetEvents.filter { $0.resetAt <= Date() }
         let previousStatuses = statuses
-        statuses = await detector.detect()
+        let providers = ProviderKind.allCases.filter { providerEnabled($0) }
+        statuses = await detector.detect(providers: providers)
         statuses = statuses.map { status in
             var enriched = status
             let previous = previousStatuses.first { $0.provider == status.provider }
             enriched.diagnostics = Self.diagnostics(for: status, previous: previous)
-            if let usage = status.usage {
-                enriched.forecast = usageHistory.forecast(for: status.provider, usage: usage, deviceID: deviceID)
-            }
             return enriched
         }
-        usageHistory.record(statuses, deviceID: deviceID)
-        await sendHealthAlertsIfNeeded(for: statuses)
-        await sendQuotaAlertsIfNeeded(for: statuses)
+        await notifyLowQuotaTransitions(previous: previousStatuses, current: statuses)
         await notifySessionQuotaTransitions(previous: previousStatuses, current: statuses)
         updateCursorMeterSelection(previous: previousStatuses, current: statuses)
         updateAntigravityCreditsSelection(previous: previousStatuses, current: statuses)
@@ -553,9 +634,17 @@ final class AppModel: ObservableObject {
         let blockedResetEvents = detectedResetEvents.filter { !isResetUsable($0, in: statuses) }
         deviceNotifications.cancel(identifiers: blockedResetEvents.map(\.id))
         pendingResetEvents = detectedResetEvents.filter { $0.resetAt > Date() && isResetUsable($0, in: statuses) }
-        savePendingResetEvents()
         await scheduleDeviceNotifications(for: pendingResetEvents)
-        await sendResetNotifications(dueEvents.filter { isResetUsable($0, in: statuses) })
+        let eligibleDueEvents = dueEvents.filter { isResetUsable($0, in: statuses) }
+        let handledResetIDs = await sendResetNotifications(eligibleDueEvents)
+        if !telegramToken.isEmpty && !telegramChatID.isEmpty {
+            pendingResetEvents.append(contentsOf: eligibleDueEvents.filter {
+                !handledResetIDs.contains($0.id)
+                    && Date().timeIntervalSince($0.resetAt) < 12 * 3600
+            })
+        }
+        savePendingResetEvents()
+        await notifySustainedReadFailures(previous: previousStatuses, current: statuses)
         updateAutomaticProviderOrder()
         lastUpdated = Date()
         isRefreshing = false
@@ -574,23 +663,27 @@ final class AppModel: ObservableObject {
                 lastSuccessfulRead: nil,
                 consecutiveFailures: 0,
                 message: status.detail,
-                source: status.executable ?? "本机探测"
+                source: status.executable ?? "本机探测",
+                failureStartedAt: nil
             )
         }
         guard status.state == .connected else {
             let failures = (prior?.consecutiveFailures ?? 0) + 1
+            let failureStartedAt = prior?.failureStartedAt ?? Date()
+            let isSustainedFailure = Date().timeIntervalSince(failureStartedAt) >= 10 * 60
             let health: ProviderHealth
             if status.state == .needsLogin || status.state == .tokenStale {
-                health = failures >= 10 ? .authorizationRequired : .stale
+                health = isSustainedFailure ? .authorizationRequired : .stale
             } else {
-                health = failures >= 10 ? .failing : .stale
+                health = isSustainedFailure ? .failing : .stale
             }
             return ProviderDiagnostics(
                 health: health,
                 lastSuccessfulRead: prior?.lastSuccessfulRead,
                 consecutiveFailures: failures,
                 message: status.detail,
-                source: status.executable ?? "本机探测"
+                source: status.executable ?? "本机探测",
+                failureStartedAt: failureStartedAt
             )
         }
         return ProviderDiagnostics(
@@ -598,92 +691,27 @@ final class AppModel: ObservableObject {
             lastSuccessfulRead: Date(),
             consecutiveFailures: 0,
             message: nil,
-            source: status.executable ?? "Provider API"
+            source: status.executable ?? "Provider API",
+            failureStartedAt: nil
         )
     }
 
     func openAgent(_ provider: ProviderKind) {
-        let path: String
+        let paths: [String]
         switch provider {
-        case .chatGPT: path = "/Applications/ChatGPT.app"
-        case .cursor: path = "/Applications/Cursor.app"
-        case .googleAntigravity: path = "/Applications/Antigravity.app"
-        case .claudeCode: path = "/System/Applications/Utilities/Terminal.app"
+        case .chatGPT: paths = ["/Applications/ChatGPT.app"]
+        case .cursor: paths = ["/Applications/Cursor.app"]
+        case .googleAntigravity:
+            paths = ["/Applications/Antigravity.app", "/Applications/Antigravity IDE.app"]
+        case .kimiCode: paths = ["/Applications/Kimi.app", "/System/Applications/Utilities/Terminal.app"]
+        case .claudeCode: paths = ["/System/Applications/Utilities/Terminal.app"]
         }
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: path) else {
+        guard let path = paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
             message = "未找到 \(provider.title) 的可打开应用"
             return
         }
+        let url = URL(fileURLWithPath: path)
         NSWorkspace.shared.open(url)
-    }
-
-    func usageHistorySummary() -> String {
-        let points = usageHistory.points()
-        guard !points.isEmpty else { return "正在积累本机用量历史…" }
-        let count = Set(points.map(\.provider)).count
-        return "共记录 \(points.count) 个样本，覆盖 \(count) 个 Agent"
-    }
-
-    func usageHistoryPeriod() -> String? {
-        let points = usageHistory.points()
-        guard let first = points.first, let last = points.last else { return nil }
-        return "\(first.date.formatted(date: .omitted, time: .shortened)) 至 \(last.date.formatted(date: .omitted, time: .shortened))"
-    }
-
-    func usageHistorySummaries() -> [UsageHistorySummary] {
-        usageHistory.summaries()
-    }
-
-    private func sendHealthAlertsIfNeeded(for statuses: [AgentStatus]) async {
-        for status in statuses {
-            guard let diagnostics = status.diagnostics,
-                  diagnostics.health == .failing || diagnostics.health == .authorizationRequired else { continue }
-            let key = "\(status.provider.rawValue).\(diagnostics.health.rawValue)"
-            let last = UserDefaults.standard.double(forKey: "\(Self.healthAlertKey).\(key)")
-            guard Date().timeIntervalSince1970 - last >= 6 * 3600 else { continue }
-            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "\(Self.healthAlertKey).\(key)")
-            let body = diagnostics.health == .authorizationRequired
-                ? "连续 10 分钟无法读取额度，可能需要重新登录或授权。"
-                : "连续 10 分钟无法读取额度，请检查网络、应用和登录状态。"
-            if deviceNotificationsEnabled {
-                await deviceNotifications.notifyNow(identifier: "reset.health.\(key).\(Int(Date().timeIntervalSince1970))", title: "\(status.provider.title) 需要处理", body: body)
-            }
-            guard holdsTelegramLease, telegramEnabled,
-                  let chatID = Int64(telegramChatID.trimmingCharacters(in: .whitespacesAndNewlines)) else { continue }
-            _ = try? await telegram.sendMessage(token: telegramToken, chatID: chatID, text: "<b>\(htmlEscape(status.provider.title)) 需要处理</b>\n\n\(htmlEscape(body))", parseMode: "HTML", silent: false)
-        }
-    }
-
-    private func sendQuotaAlertsIfNeeded(for statuses: [AgentStatus]) async {
-        guard deviceNotificationsEnabled else { return }
-        for status in statuses {
-            guard let usage = status.usage,
-                  let window = usage.fiveHour ?? usage.groups.compactMap(\.fiveHour).min(by: { $0.remaining < $1.remaining }) ?? usage.cursorAutoComposer else { continue }
-            let forecast = status.forecast
-            let isCritical = window.remaining <= 10
-            let isLow = window.remaining <= 20
-            let willExhaust = forecast?.isLikelyToExhaustBeforeReset == true
-            guard isCritical || (isLow && willExhaust) else { continue }
-            let level = isCritical ? "critical" : "projected"
-            let key = "\(Self.quotaAlertKey).\(status.provider.rawValue).\(level)"
-            let last = UserDefaults.standard.double(forKey: key)
-            guard Date().timeIntervalSince1970 - last >= 4 * 3600 else { continue }
-            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: key)
-            let body: String
-            if isCritical {
-                body = "当前主要额度仅剩 \(Int(window.remaining))%。"
-            } else if let exhaustion = forecast?.estimatedExhaustion {
-                body = "剩余 \(Int(window.remaining))%，按当前速度预计 \(telegramChineseDateTime(exhaustion)) 耗尽，早于重置时间。"
-            } else {
-                continue
-            }
-            await deviceNotifications.notifyNow(
-                identifier: "reset.quota.\(status.provider.rawValue).\(level).\(Int(Date().timeIntervalSince1970))",
-                title: "\(status.provider.title) 额度预警",
-                body: body
-            )
-        }
     }
 
     private func updateCursorMeterSelection(previous: [AgentStatus], current: [AgentStatus]) {
@@ -834,10 +862,12 @@ final class AppModel: ObservableObject {
             return
         }
         telegramEnabled = true
+        let telegramClient = telegram
+        let token = telegramToken
         pollingTask = Task { [weak self] in
-            guard let self else { return }
-            try? await telegram.configureCommands(token: telegramToken)
-            await telegram.poll(token: telegramToken) { [weak self] update in
+            try? await telegramClient.configureCommands(token: token)
+            guard !Task.isCancelled else { return }
+            await telegramClient.poll(token: token) { [weak self] update in
                 await self?.handle(update)
             }
         }
@@ -1008,18 +1038,26 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(deviceNotificationsEnabled, forKey: Self.deviceNotificationsKey)
     }
 
-    private func sendResetNotifications(_ events: [ResetEvent]) async {
+    private func sendResetNotifications(_ events: [ResetEvent]) async -> Set<String> {
         guard !events.isEmpty,
               holdsTelegramLease,
               telegramEnabled,
-              let chatID = Int64(telegramChatID.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+              let chatID = Int64(telegramChatID.trimmingCharacters(in: .whitespacesAndNewlines)) else { return [] }
         var claimed: [ResetEvent] = []
+        var handledIDs: Set<String> = []
         for event in events {
-            if (try? await deviceSync.claimTelegramNotification(eventID: event.id, deviceID: deviceID)) == true {
-                claimed.append(event)
+            do {
+                if try await deviceSync.claimTelegramNotification(eventID: event.id, deviceID: deviceID) {
+                    claimed.append(event)
+                } else {
+                    handledIDs.insert(event.id)
+                }
+            } catch {
+                // Keep this event retryable when iCloud coordination itself is
+                // temporarily unavailable.
             }
         }
-        guard !claimed.isEmpty else { return }
+        guard !claimed.isEmpty else { return handledIDs }
         let lines = claimed.map { event in
             "• <b>\(htmlEscape(event.providerName))</b>：\(htmlEscape(event.quotaName))\n　\(htmlEscape(event.periodName))已恢复。"
         }
@@ -1034,14 +1072,20 @@ final class AppModel: ObservableObject {
                 silent: false
             )
             try? await deviceSync.recordTelegramNotification(messageID: messageID, chatID: chatID)
+            handledIDs.formUnion(claimed.map(\.id))
         } catch {
             for event in claimed { await deviceSync.releaseTelegramNotificationClaim(eventID: event.id) }
         }
+        return handledIDs
     }
 
     private func isResetUsable(_ event: ResetEvent, in statuses: [AgentStatus]) -> Bool {
+        guard let provider = ProviderKind.allCases.first(where: { $0.title == event.providerName }),
+              providerEnabled(provider) else { return false }
         guard event.periodName == "5 小时额度" else { return true }
-        guard let usage = statuses.first(where: { $0.provider.title == event.providerName })?.usage else { return false }
+        // A provider outage at the reset boundary must not silently discard a
+        // reminder that was already scheduled from a valid low-quota sample.
+        guard let usage = statuses.first(where: { $0.provider.title == event.providerName })?.usage else { return true }
         if let group = usage.groups.first(where: { $0.name == event.quotaName }) {
             return (group.sevenDay?.remaining ?? 100) > 0
         }
@@ -1078,6 +1122,108 @@ final class AppModel: ObservableObject {
                     await check(label: group.name, period: "一周额度", previousWindow: previousGroup?.sevenDay, currentWindow: group.sevenDay)
                 }
             }
+        }
+    }
+
+    private func notifyLowQuotaTransitions(previous: [AgentStatus], current: [AgentStatus]) async {
+        var telegramLines: [String] = []
+        for status in current where providerEnabled(status.provider) {
+            guard let usage = status.usage else { continue }
+            let previousUsage = previous.first(where: { $0.provider == status.provider })?.usage
+            var alerts: [(String, String, Double)] = []
+            func collect(label: String, period: String, previous: QuotaWindow?, current: QuotaWindow?) {
+                let key = Self.lowQuotaStateKeyPrefix
+                    + "\(status.provider.rawValue).\(label).\(period)"
+                let wasPersistedLow = UserDefaults.standard.bool(forKey: key)
+                let remaining = current?.remaining
+                let isLow = remaining.map { $0 <= QuotaWindow.criticalRemainingThreshold } ?? false
+                let shouldNotify = previous != nil
+                    ? LowQuotaNotificationLogic.shouldNotify(
+                        previousRemaining: previous?.remaining,
+                        currentRemaining: remaining
+                    )
+                    : (isLow && !wasPersistedLow)
+                UserDefaults.standard.set(isLow, forKey: key)
+                guard shouldNotify, let remaining else { return }
+                alerts.append((label, period, remaining))
+            }
+            if usage.groups.isEmpty {
+                collect(label: status.provider.title, period: "5 小时额度", previous: previousUsage?.fiveHour, current: usage.fiveHour)
+                collect(label: status.provider.title, period: "一周额度", previous: previousUsage?.sevenDay, current: usage.sevenDay)
+                collect(label: status.provider.title, period: "账单周期", previous: previousUsage?.monthly, current: usage.monthly)
+                collect(label: status.provider.title, period: "API 额度", previous: previousUsage?.api, current: usage.api)
+                collect(label: "Auto + Composer", period: "账单周期", previous: previousUsage?.cursorAutoComposer, current: usage.cursorAutoComposer)
+                collect(label: "API", period: "账单周期", previous: previousUsage?.cursorAPI, current: usage.cursorAPI)
+            } else {
+                for group in usage.groups {
+                    let old = previousUsage?.groups.first(where: { $0.name == group.name })
+                    collect(label: group.name, period: "5 小时额度", previous: old?.fiveHour, current: group.fiveHour)
+                    collect(label: group.name, period: "一周额度", previous: old?.sevenDay, current: group.sevenDay)
+                }
+            }
+            for (label, period, remaining) in alerts {
+                let body = "\(label)的\(period)仅剩 \(Int(remaining))%。"
+                if deviceNotificationsEnabled {
+                    await deviceNotifications.notifyNow(
+                        identifier: "reset.low.\(status.provider.rawValue).\(label).\(period).\(Int(Date().timeIntervalSince1970 / 3600))",
+                        title: "\(status.provider.title) 额度偏低",
+                        body: body
+                    )
+                }
+                telegramLines.append("• <b>\(htmlEscape(status.provider.title))</b>：\(htmlEscape(body))")
+            }
+        }
+        await sendTelegramAlert(
+            title: "低额度预警",
+            lines: telegramLines,
+            claimPrefix: "low"
+        )
+    }
+
+    private func notifySustainedReadFailures(previous: [AgentStatus], current: [AgentStatus]) async {
+        var telegramLines: [String] = []
+        for status in current {
+            guard status.diagnostics?.health == .failing
+                    || status.diagnostics?.health == .authorizationRequired else { continue }
+            let previousHealth = previous.first(where: { $0.provider == status.provider })?.diagnostics?.health
+            guard previousHealth != .failing && previousHealth != .authorizationRequired else { continue }
+            let body = "固定额度查询入口已连续 10 分钟没有成功响应。\(status.detail ?? "请检查登录状态或网络。")"
+            if deviceNotificationsEnabled {
+                await deviceNotifications.notifyNow(
+                    identifier: "reset.unresponsive.\(status.provider.rawValue).\(Int(Date().timeIntervalSince1970 / 86_400))",
+                    title: "\(status.provider.title) 额度查询无响应",
+                    body: body
+                )
+            }
+            telegramLines.append("• <b>\(htmlEscape(status.provider.title))</b>：\(htmlEscape(body))")
+        }
+        await sendTelegramAlert(
+            title: "额度查询异常",
+            lines: telegramLines,
+            claimPrefix: "unresponsive"
+        )
+    }
+
+    private func sendTelegramAlert(title: String, lines: [String], claimPrefix: String) async {
+        guard !lines.isEmpty,
+              holdsTelegramLease,
+              telegramEnabled,
+              let chatID = Int64(telegramChatID.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        let bucket = Int(Date().timeIntervalSince1970 / 3600)
+        let eventID = "\(claimPrefix).\(bucket).\(lines.joined(separator: "|"))"
+        guard (try? await deviceSync.claimTelegramNotification(eventID: eventID, deviceID: deviceID)) == true else { return }
+        do {
+            let messageID = try await telegram.sendMessage(
+                token: telegramToken,
+                chatID: chatID,
+                text: "<b>\(htmlEscape(title))</b>\n\n" + lines.joined(separator: "\n\n"),
+                parseMode: "HTML",
+                keyboard: nil,
+                silent: false
+            )
+            try? await deviceSync.recordTelegramNotification(messageID: messageID, chatID: chatID)
+        } catch {
+            await deviceSync.releaseTelegramNotificationClaim(eventID: eventID)
         }
     }
 
