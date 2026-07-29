@@ -564,7 +564,7 @@ final class AppModel: ObservableObject {
         if usage.provider == .cursor {
             return UserDefaults.standard.string(forKey: Self.cursorMeterKey) == "api"
         }
-        if usage.provider == .googleAntigravity {
+        if usage.provider == .googleAntigravity || usage.provider == .googleAntigravityIDE {
             let hasExhaustedPool = usage.groups.contains {
                 ($0.fiveHour?.remaining ?? 0) <= 0 && ($0.sevenDay?.remaining ?? 0) <= 0
             }
@@ -593,7 +593,7 @@ final class AppModel: ObservableObject {
             .compactMap { provider in statuses.first(where: { $0.provider == provider }) }
     }
 
-    private static let defaultProviderOrder: [ProviderKind] = [.chatGPT, .googleAntigravity, .kimiCode, .claudeCode, .cursor]
+    private static let defaultProviderOrder: [ProviderKind] = [.chatGPT, .googleAntigravity, .googleAntigravityIDE, .kimiCode, .claudeCode, .cursor]
     private static let orderKey = "providerOrder"
     private static let activityScoresKey = "providerActivityScores"
 
@@ -702,7 +702,9 @@ final class AppModel: ObservableObject {
         case .chatGPT: paths = ["/Applications/ChatGPT.app"]
         case .cursor: paths = ["/Applications/Cursor.app"]
         case .googleAntigravity:
-            paths = ["/Applications/Antigravity.app", "/Applications/Antigravity IDE.app"]
+            paths = ["/Applications/Antigravity.app"]
+        case .googleAntigravityIDE:
+            paths = ["/Applications/Antigravity IDE.app"]
         case .kimiCode: paths = ["/Applications/Kimi.app", "/System/Applications/Utilities/Terminal.app"]
         case .claudeCode: paths = ["/System/Applications/Utilities/Terminal.app"]
         }

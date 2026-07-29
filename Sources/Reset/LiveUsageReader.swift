@@ -24,8 +24,8 @@ struct LiveUsageReader: Sendable {
             return try await readClaudeCode()
         case .cursor:
             return try await readCursor()
-        case .googleAntigravity:
-            return try await readAntigravity()
+        case .googleAntigravity, .googleAntigravityIDE:
+            return try await AntigravityQuotaClient(provider: provider).fetch()
         case .kimiCode:
             return try await KimiQuotaClient().fetch()
         }

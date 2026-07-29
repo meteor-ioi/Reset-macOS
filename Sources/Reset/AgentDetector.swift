@@ -26,7 +26,7 @@ struct AgentDetector: Sendable {
             return AgentStatus(provider: provider, state: .notInstalled, executable: nil, usage: nil, detail: "未找到 \(provider.title) 的 CLI 或应用")
         }
         switch provider {
-        case .chatGPT, .claudeCode, .cursor, .googleAntigravity, .kimiCode:
+        case .chatGPT, .claudeCode, .cursor, .googleAntigravity, .googleAntigravityIDE, .kimiCode:
             do {
                 let usage = try await usageReader.read(for: provider)
                 return AgentStatus(provider: provider, state: .connected, executable: path, usage: usage, detail: "已读取实时额度")

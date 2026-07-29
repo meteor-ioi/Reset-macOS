@@ -8,6 +8,12 @@ struct AntigravityQuotaClient {
         let appName: String
     }
 
+    let provider: ProviderKind
+
+    init(provider: ProviderKind = .googleAntigravity) {
+        self.provider = provider
+    }
+
     private let fileManager = FileManager.default
 
     func fetch() async throws -> ProviderUsage {
@@ -27,7 +33,7 @@ struct AntigravityQuotaClient {
                         path: "exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
                         body: Data(#"{"forceRefresh":true}"#.utf8)
                     )
-                    var usage = try Self.parseQuotaSummary(summary)
+                    var usage = try Self.parseQuotaSummary(summary, provider: provider)
                     if hasMultipleSources {
                         usage.groups = usage.groups.map { group in
                             var g = group
@@ -72,7 +78,7 @@ struct AntigravityQuotaClient {
             }
 
             let finalUsage = ProviderUsage(
-                provider: .googleAntigravity,
+                provider: provider,
                 fiveHour: nil,
                 sevenDay: nil,
                 monthly: nil,
@@ -90,23 +96,26 @@ struct AntigravityQuotaClient {
         if let cached = cachedUsage() {
             return cached
         }
-        throw lastError ?? UsageReadError.unavailable("Antigravity 本机额度服务不可用")
+        throw lastError ?? UsageReadError.unavailable("\(provider.title) 本机额度服务不可用")
     }
 
     func discoverConnections() throws -> [Connection] {
         guard let processList = command("/bin/ps", ["-ax", "-o", "pid=,command="]) else {
-            throw UsageReadError.unavailable("无法枚举 Antigravity 进程")
+            throw UsageReadError.unavailable("无法枚举 \(provider.title) 进程")
         }
         var results: [Connection] = []
         for line in processList.split(separator: "\n").map(String.init) {
             let lower = line.lowercased()
-            guard (lower.contains("/antigravity.app/") || lower.contains("/antigravity ide.app/") || lower.contains("antigravity-ide") || lower.contains("agy-ide")),
-                  lower.contains("language_server") || lower.contains("language-server") else { continue }
+            let isIDEProcess = lower.contains("/antigravity ide.app/") || lower.contains("antigravity-ide") || lower.contains("agy-ide")
+            let isAppProcess = (lower.contains("/antigravity.app/") || lower.contains("/antigravity/")) && !isIDEProcess
+
+            let matches = (provider == .googleAntigravityIDE) ? isIDEProcess : isAppProcess
+            guard matches, lower.contains("language_server") || lower.contains("language-server") else { continue }
             let fields = line.split(whereSeparator: \.isWhitespace)
             guard let pid = fields.first.flatMap({ Int32($0) }),
                   let token = Self.flagValue("--csrf_token", in: line),
                   !token.isEmpty else { continue }
-            let appName = (lower.contains("antigravity ide") || lower.contains("antigravity-ide") || lower.contains("agy-ide")) ? "Antigravity IDE" : "Antigravity"
+            let appName = (provider == .googleAntigravityIDE) ? "Antigravity IDE" : "Antigravity"
             for port in listeningPorts(pid: pid) {
                 results.append(Connection(pid: pid, port: port, csrfToken: token, appName: appName))
             }
@@ -116,8 +125,10 @@ struct AntigravityQuotaClient {
             return $0.port < $1.port
         }
         guard !results.isEmpty else {
-            throw UsageReadError.unavailable("请保持 Antigravity 或 Antigravity IDE 在后台运行")
+            throw UsageReadError.unavailable("请保持 \(provider.title) 在后台运行")
         }
+        return results
+    }
         return results
     }
 
@@ -142,7 +153,7 @@ struct AntigravityQuotaClient {
         return data
     }
 
-    static func parseQuotaSummary(_ data: Data) throws -> ProviderUsage {
+    static func parseQuotaSummary(_ data: Data, provider: ProviderKind = .googleAntigravity) throws -> ProviderUsage {
         let envelope = try JSONDecoder().decode(QuotaEnvelope.self, from: data)
         let rawGroups = envelope.response?.groups ?? envelope.summary?.groups ?? envelope.groups ?? []
         let groups = rawGroups.compactMap { raw -> QuotaGroup? in
@@ -157,10 +168,10 @@ struct AntigravityQuotaClient {
             return QuotaGroup(name: raw.displayName, fiveHour: five, sevenDay: weekly)
         }
         guard !groups.isEmpty else {
-            throw UsageReadError.invalidResponse("Antigravity 没有返回可识别的额度窗口")
+            throw UsageReadError.invalidResponse("\(provider.title) 没有返回可识别的额度窗口")
         }
         return ProviderUsage(
-            provider: .googleAntigravity,
+            provider: provider,
             fiveHour: nil,
             sevenDay: nil,
             monthly: nil,
@@ -228,7 +239,8 @@ struct AntigravityQuotaClient {
 
     private var cacheURL: URL {
         let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Reset!/antigravity-quota.json")
+        let filename = provider == .googleAntigravityIDE ? "antigravity-ide-quota.json" : "antigravity-quota.json"
+        return base.appendingPathComponent("Reset!/\(filename)")
     }
 
     private func cache(_ usage: ProviderUsage) throws {

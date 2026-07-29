@@ -6,6 +6,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
     case chatGPT = "chatgpt"
     case cursor
     case googleAntigravity = "antigravity"
+    case googleAntigravityIDE = "antigravity-ide"
     case kimiCode = "kimi-code"
 
     var id: String { rawValue }
@@ -15,6 +16,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: "ChatGPT"
         case .cursor: "Cursor"
         case .googleAntigravity: "Antigravity"
+        case .googleAntigravityIDE: "Antigravity IDE"
         case .kimiCode: "Kimi"
         }
     }
@@ -24,7 +26,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .claudeCode: "Anthropic"
         case .chatGPT: "OpenAI"
         case .cursor: "Anysphere"
-        case .googleAntigravity: "Google"
+        case .googleAntigravity, .googleAntigravityIDE: "Google"
         case .kimiCode: "月之暗面"
         }
     }
@@ -35,6 +37,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: "chatgpt"
         case .cursor: "cursor"
         case .googleAntigravity: "antigravity"
+        case .googleAntigravityIDE: "antigravity-ide"
         case .kimiCode: "kimi"
         }
     }
@@ -45,6 +48,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .chatGPT: .mint
         case .cursor: .indigo
         case .googleAntigravity: .blue
+        case .googleAntigravityIDE: .cyan
         case .kimiCode: .gray
         }
     }
@@ -60,6 +64,8 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
             [Color(red: 0.30, green: 0.25, blue: 0.85), Color(red: 0.52, green: 0.42, blue: 0.95)]
         case .googleAntigravity:
             [Color(red: 0.18, green: 0.48, blue: 0.98), Color(red: 0.34, green: 0.74, blue: 1.0)]
+        case .googleAntigravityIDE:
+            [Color(red: 0.12, green: 0.58, blue: 0.95), Color(red: 0.20, green: 0.85, blue: 0.90)]
         case .kimiCode:
             [Color(red: 0.05, green: 0.05, blue: 0.06), Color(red: 0.30, green: 0.34, blue: 0.40)]
         }
@@ -70,7 +76,8 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .claudeCode: ["claude"]
         case .chatGPT: ["codex"]
         case .cursor: ["cursor-agent", "cursor"]
-        case .googleAntigravity: ["agy", "agy-ide", "antigravity", "antigravity-cli"]
+        case .googleAntigravity: ["agy", "antigravity", "antigravity-cli"]
+        case .googleAntigravityIDE: ["agy-ide", "antigravity-ide"]
         case .kimiCode: ["kimi"]
         }
     }
@@ -82,7 +89,9 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .cursor: ["/Applications/Cursor.app/Contents/MacOS/Cursor"]
         case .googleAntigravity: [
             "/Applications/Antigravity.app/Contents/MacOS/Antigravity",
-            "/Applications/Antigravity.app/Contents/MacOS/antigravity",
+            "/Applications/Antigravity.app/Contents/MacOS/antigravity"
+        ]
+        case .googleAntigravityIDE: [
             "/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity IDE",
             "/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity"
         ]
@@ -105,10 +114,13 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .googleAntigravity:
             [
                 "antigravity.app/contents/macos/antigravity",
-                "antigravity ide.app/contents/macos/antigravity",
                 "antigravity-cli",
-                "agy-ide",
                 "/agentapi"
+            ]
+        case .googleAntigravityIDE:
+            [
+                "antigravity ide.app/contents/macos/antigravity",
+                "agy-ide"
             ]
         case .kimiCode:
             [
@@ -126,7 +138,9 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Hashable, Sendab
         case .claudeCode: ["com.anthropic.claudefordesktop"]
         case .cursor: ["com.todesktop.230313mzl4w4u92"]
         case .googleAntigravity: [
-            "com.google.antigravity",
+            "com.google.antigravity"
+        ]
+        case .googleAntigravityIDE: [
             "com.google.antigravity-ide",
             "com.google.antigravity.ide"
         ]

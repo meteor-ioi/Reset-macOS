@@ -230,7 +230,7 @@ struct QuotaCard: View {
             if let usage = status.usage {
                 if status.provider == .cursor {
                     CursorQuotaList(usage: usage, gradient: tintGradient)
-                } else if status.provider == .googleAntigravity {
+                } else if status.provider == .googleAntigravity || status.provider == .googleAntigravityIDE {
                     AntigravityCompactQuotaList(groups: usage.groups)
                     if let credits = usage.displayableAICredits {
                         AntigravityCreditsRow(credits: credits)
