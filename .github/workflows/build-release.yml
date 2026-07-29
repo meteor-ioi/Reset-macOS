@@ -12,6 +12,8 @@ jobs:
   build:
     name: Build macOS App
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
