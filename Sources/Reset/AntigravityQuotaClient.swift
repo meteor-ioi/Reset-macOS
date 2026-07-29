@@ -20,6 +20,7 @@ struct AntigravityQuotaClient {
         var lastError: Error?
         var mergedGroups: [QuotaGroup] = []
         var totalCredits: Double?
+        var fetchedEmail: String?
 
         do {
             let connections = try discoverConnections()
@@ -55,8 +56,12 @@ struct AntigravityQuotaClient {
                             ],
                         ])
                     ) {
-                        if let credits = Self.parseCredits(status) {
+                        let parsed = Self.parseUserStatus(status)
+                        if let credits = parsed.credits {
                             totalCredits = (totalCredits ?? 0) + credits
+                        }
+                        if let email = parsed.email, !email.isEmpty {
+                            fetchedEmail = email
                         }
                     }
                 } catch {
@@ -84,7 +89,8 @@ struct AntigravityQuotaClient {
                 monthly: nil,
                 capturedAt: Date(),
                 groups: uniqueGroups,
-                aiCredits: totalCredits
+                aiCredits: totalCredits,
+                accountEmail: fetchedEmail
             )
             try? cache(finalUsage)
             return finalUsage
@@ -127,8 +133,6 @@ struct AntigravityQuotaClient {
         guard !results.isEmpty else {
             throw UsageReadError.unavailable("请保持 \(provider.title) 在后台运行")
         }
-        return results
-    }
         return results
     }
 
@@ -189,17 +193,23 @@ struct AntigravityQuotaClient {
         )
     }
 
-    private static func parseCredits(_ data: Data) -> Double? {
+    private static func parseUserStatus(_ data: Data) -> (credits: Double?, email: String?) {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let status = root["userStatus"] as? [String: Any],
-              let tier = status["userTier"] as? [String: Any],
-              let credits = tier["availableCredits"] as? [[String: Any]] else { return nil }
-        let total = credits.reduce(0.0) {
-            $0 + (($1["creditAmount"] as? NSNumber)?.doubleValue
-                ?? ($1["creditAmount"] as? String).flatMap(Double.init)
-                ?? 0)
+              let status = root["userStatus"] as? [String: Any] else { return (nil, nil) }
+
+        let email = (status["email"] as? String) ?? (status["name"] as? String)
+
+        var creditsTotal: Double? = nil
+        if let tier = status["userTier"] as? [String: Any],
+           let credits = tier["availableCredits"] as? [[String: Any]] {
+            let total = credits.reduce(0.0) {
+                $0 + (($1["creditAmount"] as? NSNumber)?.doubleValue
+                    ?? ($1["creditAmount"] as? String).flatMap(Double.init)
+                    ?? 0)
+            }
+            if total > 0 { creditsTotal = total }
         }
-        return total > 0 ? total : nil
+        return (creditsTotal, email)
     }
 
     private static func flagValue(_ flag: String, in command: String) -> String? {

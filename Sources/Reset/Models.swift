@@ -319,6 +319,7 @@ struct ProviderUsage: Codable, Equatable, Sendable {
     var groups: [QuotaGroup] = []
     var aiCredits: Double? = nil
     var subscriptionTier: String? = nil
+    var accountEmail: String? = nil
     var api: QuotaWindow? = nil
     var apiActive: Bool? = nil
     var cursorAutoComposer: QuotaWindow? = nil

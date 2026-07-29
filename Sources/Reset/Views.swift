@@ -220,7 +220,7 @@ struct QuotaCard: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(status.provider.title).font(.headline.weight(.semibold))
-                    Text(status.provider.company)
+                    Text(status.usage?.accountEmail ?? status.provider.company)
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
