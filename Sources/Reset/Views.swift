@@ -334,53 +334,89 @@ private func antigravityGroupOrder(_ lhs: QuotaGroup, _ rhs: QuotaGroup) -> Bool
 private struct AntigravityCompactQuotaList: View {
     let groups: [QuotaGroup]
 
-    private var gemini: QuotaGroup? {
-        groups.first { $0.name.localizedCaseInsensitiveContains("gemini") }
-    }
+    private var groupsBySource: [(source: String?, items: [QuotaGroup])] {
+        var dict: [String: [QuotaGroup]] = [:]
+        var order: [String] = []
+        var defaultItems: [QuotaGroup] = []
 
-    private var thirdParty: QuotaGroup? {
-        groups.first { !$0.name.localizedCaseInsensitiveContains("gemini") }
+        for group in groups {
+            if let range = group.name.range(of: #" \((.+)\)$"#, options: .regularExpression) {
+                let source = String(group.name[range].dropFirst(2).dropLast(1))
+                if dict[source] == nil {
+                    order.append(source)
+                    dict[source] = []
+                }
+                dict[source]?.append(group)
+            } else {
+                defaultItems.append(group)
+            }
+        }
+
+        if !defaultItems.isEmpty && order.isEmpty {
+            return [(nil, defaultItems)]
+        }
+        return order.map { (source: $0, items: dict[$0] ?? []) }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            // Keep each shared model pool together so its short and long windows
-            // can be understood as a single quota at a glance.
-            if let window = gemini?.fiveHour {
-                AntigravityCompactQuotaRow(
-                    groupName: "Gemini models",
-                    quotaName: "5 小时内额度",
-                    window: window,
-                    gradient: [.blue, .cyan]
-                )
-            }
-            if let window = gemini?.sevenDay {
-                AntigravityCompactQuotaRow(
-                    groupName: "Gemini models",
-                    quotaName: "一周额度",
-                    window: window,
-                    gradient: [.blue, .cyan]
-                )
-            }
-            if (gemini?.fiveHour != nil || gemini?.sevenDay != nil),
-               (thirdParty?.fiveHour != nil || thirdParty?.sevenDay != nil) {
-                Divider().opacity(0.5)
-            }
-            if let window = thirdParty?.fiveHour {
-                AntigravityCompactQuotaRow(
-                    groupName: "Claude/ChatGPT models",
-                    quotaName: "5 小时内额度",
-                    window: window,
-                    gradient: thirdPartyGradient
-                )
-            }
-            if let window = thirdParty?.sevenDay {
-                AntigravityCompactQuotaRow(
-                    groupName: "Claude/ChatGPT models",
-                    quotaName: "一周额度",
-                    window: window,
-                    gradient: thirdPartyGradient
-                )
+            ForEach(Array(groupsBySource.enumerated()), id: \.offset) { index, section in
+                if index > 0 {
+                    Divider().opacity(0.4)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    if let source = section.source {
+                        HStack(spacing: 5) {
+                            Image(systemName: "cpu")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                            Text(source)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.primary)
+                        }
+                        .padding(.bottom, 1)
+                    }
+
+                    let gemini = section.items.first { $0.name.localizedCaseInsensitiveContains("gemini") }
+                    let thirdParty = section.items.first { !$0.name.localizedCaseInsensitiveContains("gemini") }
+
+                    if let window = gemini?.fiveHour {
+                        AntigravityCompactQuotaRow(
+                            groupName: "Gemini models",
+                            quotaName: "5 小时内额度",
+                            window: window,
+                            gradient: [.blue, .cyan]
+                        )
+                    }
+                    if let window = gemini?.sevenDay {
+                        AntigravityCompactQuotaRow(
+                            groupName: "Gemini models",
+                            quotaName: "一周额度",
+                            window: window,
+                            gradient: [.blue, .cyan]
+                        )
+                    }
+                    if (gemini?.fiveHour != nil || gemini?.sevenDay != nil),
+                       (thirdParty?.fiveHour != nil || thirdParty?.sevenDay != nil) {
+                        Divider().opacity(0.5)
+                    }
+                    if let window = thirdParty?.fiveHour {
+                        AntigravityCompactQuotaRow(
+                            groupName: "Claude/ChatGPT models",
+                            quotaName: "5 小时内额度",
+                            window: window,
+                            gradient: thirdPartyGradient
+                        )
+                    }
+                    if let window = thirdParty?.sevenDay {
+                        AntigravityCompactQuotaRow(
+                            groupName: "Claude/ChatGPT models",
+                            quotaName: "一周额度",
+                            window: window,
+                            gradient: thirdPartyGradient
+                        )
+                    }
+                }
             }
         }
     }

@@ -5,6 +5,7 @@ struct AntigravityQuotaClient {
         let pid: Int32
         let port: Int
         let csrfToken: String
+        let appName: String
     }
 
     private let fileManager = FileManager.default
@@ -16,6 +17,9 @@ struct AntigravityQuotaClient {
 
         do {
             let connections = try discoverConnections()
+            let appNames = Set(connections.map(\.appName))
+            let hasMultipleSources = appNames.count > 1 || connections.count > 1
+
             for connection in connections {
                 do {
                     let summary = try await request(
@@ -23,7 +27,14 @@ struct AntigravityQuotaClient {
                         path: "exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary",
                         body: Data(#"{"forceRefresh":true}"#.utf8)
                     )
-                    let usage = try Self.parseQuotaSummary(summary)
+                    var usage = try Self.parseQuotaSummary(summary)
+                    if hasMultipleSources {
+                        usage.groups = usage.groups.map { group in
+                            var g = group
+                            g.name = "\(group.name) (\(connection.appName))"
+                            return g
+                        }
+                    }
                     mergedGroups.append(contentsOf: usage.groups)
 
                     if let status = try? await request(
@@ -89,14 +100,15 @@ struct AntigravityQuotaClient {
         var results: [Connection] = []
         for line in processList.split(separator: "\n").map(String.init) {
             let lower = line.lowercased()
-            guard (lower.contains("/antigravity.app/") || lower.contains("/antigravity ide.app/")),
+            guard (lower.contains("/antigravity.app/") || lower.contains("/antigravity ide.app/") || lower.contains("antigravity-ide") || lower.contains("agy-ide")),
                   lower.contains("language_server") || lower.contains("language-server") else { continue }
             let fields = line.split(whereSeparator: \.isWhitespace)
             guard let pid = fields.first.flatMap({ Int32($0) }),
                   let token = Self.flagValue("--csrf_token", in: line),
                   !token.isEmpty else { continue }
+            let appName = (lower.contains("antigravity ide") || lower.contains("antigravity-ide") || lower.contains("agy-ide")) ? "Antigravity IDE" : "Antigravity"
             for port in listeningPorts(pid: pid) {
-                results.append(Connection(pid: pid, port: port, csrfToken: token))
+                results.append(Connection(pid: pid, port: port, csrfToken: token, appName: appName))
             }
         }
         results.sort {
