@@ -3,9 +3,9 @@ import Foundation
 struct AgentDetector: Sendable {
     private let usageReader = LiveUsageReader()
 
-    func detect() async -> [AgentStatus] {
+    func detect(providers: [ProviderKind] = ProviderKind.allCases) async -> [AgentStatus] {
         await withTaskGroup(of: AgentStatus.self, returning: [AgentStatus].self) { group in
-            for provider in ProviderKind.allCases {
+            for provider in providers {
                 group.addTask { await detect(provider) }
             }
             return await group.reduce(into: []) { $0.append($1) }.sorted { $0.provider.rawValue < $1.provider.rawValue }
@@ -26,7 +26,7 @@ struct AgentDetector: Sendable {
             return AgentStatus(provider: provider, state: .notInstalled, executable: nil, usage: nil, detail: "未找到 \(provider.title) 的 CLI 或应用")
         }
         switch provider {
-        case .chatGPT, .claudeCode, .cursor, .googleAntigravity:
+        case .chatGPT, .claudeCode, .cursor, .googleAntigravity, .kimiCode:
             do {
                 let usage = try await usageReader.read(for: provider)
                 return AgentStatus(provider: provider, state: .connected, executable: path, usage: usage, detail: "已读取实时额度")

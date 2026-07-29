@@ -104,7 +104,7 @@ struct AntigravityQuotaClient {
             return $0.port < $1.port
         }
         guard !results.isEmpty else {
-            throw UsageReadError.unavailable("请保持 Antigravity 在后台运行")
+            throw UsageReadError.unavailable("请保持 Antigravity 或 Antigravity IDE 在后台运行")
         }
         return results
     }

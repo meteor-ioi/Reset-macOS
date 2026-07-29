@@ -28,14 +28,6 @@ struct SharedTelegramConfiguration: Codable, Sendable {
     let updatedAt: Date
 }
 
-struct SharedUsageHistory: Codable, Sendable {
-    let schemaVersion: Int
-    let deviceID: String
-    let deviceName: String
-    let updatedAt: Date
-    let points: [UsageHistoryPoint]
-}
-
 struct TelegramNotificationClaim: Codable, Sendable {
     let eventID: String
     let claimID: String
@@ -87,7 +79,6 @@ actor ICloudDeviceSync {
             requestDownloadIfNeeded(for: root.appendingPathComponent("devices", isDirectory: true))
             requestDownloadIfNeeded(for: root.appendingPathComponent("shared", isDirectory: true))
             requestDownloadIfNeeded(for: root.appendingPathComponent("leases", isDirectory: true))
-            requestDownloadIfNeeded(for: root.appendingPathComponent("usage-history", isDirectory: true))
         }
         return available
     }
@@ -245,32 +236,10 @@ actor ICloudDeviceSync {
             .sorted { $0.lastHeartbeat > $1.lastHeartbeat }
     }
 
-    func writeUsageHistory(deviceID: String, deviceName: String, points: [UsageHistoryPoint]) throws {
-        try write(
-            SharedUsageHistory(
-                schemaVersion: 1,
-                deviceID: deviceID,
-                deviceName: deviceName,
-                updatedAt: Date(),
-                points: points
-            ),
-            to: root.appendingPathComponent("usage-history/\(deviceID).json")
+    func purgeLegacyUsageHistory() {
+        try? FileManager.default.removeItem(
+            at: root.appendingPathComponent("usage-history", isDirectory: true)
         )
-    }
-
-    func allUsageHistory() -> [UsageHistoryPoint] {
-        let directory = root.appendingPathComponent("usage-history", isDirectory: true)
-        requestDownloadIfNeeded(for: directory)
-        guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else { return [] }
-        return urls.compactMap { url in
-            requestDownloadIfNeeded(for: url)
-            return try? read(SharedUsageHistory.self, from: url)
-        }
-            .filter { $0.schemaVersion == 1 }
-            .flatMap(\.points)
     }
 
     func cleanup(now: Date = Date()) -> SyncMaintenanceReport {

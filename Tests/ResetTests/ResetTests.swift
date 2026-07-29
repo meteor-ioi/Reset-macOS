@@ -48,6 +48,13 @@ final class ResetTests: XCTestCase {
         XCTAssertFalse(SessionQuotaNotificationLogic.shouldNotifyRestore(previousRemaining: nil, currentRemaining: 100))
     }
 
+    func testLowQuotaAlertOnlyFiresOnThresholdEntry() {
+        XCTAssertTrue(LowQuotaNotificationLogic.shouldNotify(previousRemaining: nil, currentRemaining: 20))
+        XCTAssertTrue(LowQuotaNotificationLogic.shouldNotify(previousRemaining: 21, currentRemaining: 20))
+        XCTAssertFalse(LowQuotaNotificationLogic.shouldNotify(previousRemaining: 20, currentRemaining: 19))
+        XCTAssertFalse(LowQuotaNotificationLogic.shouldNotify(previousRemaining: 50, currentRemaining: 49))
+    }
+
     func testZeroAPICreditsAreNotDisplayable() {
         let emptyAPI = QuotaWindow(utilization: 100, resetsAt: nil, windowSeconds: 0)
         let usage = ProviderUsage(
@@ -165,30 +172,62 @@ final class ResetTests: XCTestCase {
         XCTAssertEqual(decoded?.capturedAt, old.capturedAt)
     }
 
-    @MainActor
-    func testUsageHistoryMergesDevicesWithoutOverwritingLocalPoints() {
-        let suiteName = "ResetTests.UsageHistory.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = UsageHistoryStore(defaults: defaults)
-        let now = Date()
-        let local = UsageHistoryPoint(
-            date: now,
-            provider: .chatGPT,
-            utilization: 10,
-            estimatedCostUSD: nil,
-            originDeviceID: "mac-a"
+    func testKimiUsageParsesFiveHourWeeklyAndExtraBalance() throws {
+        let data = Data(
+            """
+            {
+              "usage": {
+                "name": "Weekly limit",
+                "used": 40,
+                "limit": 100,
+                "resetAt": "2026-07-30T12:00:00Z"
+              },
+              "limits": [{
+                "detail": {
+                  "remaining": 75,
+                  "limit": 100,
+                  "reset_in": 3600
+                },
+                "window": {
+                  "duration": 300,
+                  "timeUnit": "MINUTE"
+                }
+              }],
+              "boosterWallet": {
+                "balance": {
+                  "type": "BOOSTER",
+                  "amount": "20000000000",
+                  "amountLeft": "10000000000"
+                },
+                "monthlyUsed": {
+                  "currency": "CNY",
+                  "priceInCents": "5000"
+                }
+              }
+            }
+            """.utf8
         )
-        let remote = UsageHistoryPoint(
-            date: now.addingTimeInterval(60),
-            provider: .claudeCode,
-            utilization: 20,
-            estimatedCostUSD: nil,
-            originDeviceID: "mac-b"
+
+        let usage = try KimiQuotaClient.parseUsage(data, now: Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertEqual(usage.fiveHour?.remaining ?? -1, 75, accuracy: 0.001)
+        XCTAssertEqual(usage.sevenDay?.remaining ?? -1, 60, accuracy: 0.001)
+        XCTAssertNotNil(usage.fiveHour?.resetsAt)
+        XCTAssertNotNil(usage.sevenDay?.resetsAt)
+        XCTAssertEqual(usage.extraUsageBalance ?? -1, 100, accuracy: 0.001)
+        XCTAssertEqual(usage.extraUsageCurrency, "CNY")
+    }
+
+    func testKimiUsageRejectsMissingQuotaWindows() {
+        XCTAssertThrowsError(try KimiQuotaClient.parseUsage(Data(#"{"limits":[]}"#.utf8)))
+    }
+
+    func testKimiWeeklyLabelClassification() throws {
+        let data = Data(
+            #"{"limits":[{"name":"Weekly limit","detail":{"used":20,"limit":100}}]}"#.utf8
         )
-        store.mergeShared([local, remote], localDeviceID: "mac-a")
-        XCTAssertEqual(store.points().count, 2)
-        XCTAssertEqual(store.localPoints(deviceID: "mac-a"), [local])
+        let usage = try KimiQuotaClient.parseUsage(data)
+        XCTAssertNil(usage.fiveHour)
+        XCTAssertEqual(usage.sevenDay?.remaining ?? -1, 80, accuracy: 0.001)
     }
 
     func testUpdateVersionComparisonHandlesDateStyleTags() {
